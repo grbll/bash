@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+SSH_HOST="pi"
+
+NETWORK="netzwerk"
+
+LOCAL_DIR="$HOME"
+TARGET_DIR="/mnt/backupdisk"
+LOG_FILE="${HOME}/.cache/MyBackup/backup.log"
+OPT="-avzh"
+
+INTERVAL=604800
+INTERVAL_CHECK=true
+OK_CHECK=40
+
+WRONG_NETWORK_ERROR=36
+NO_SSH_HOST_ERROR=37
+NO_SSH_PERMISSION_ERROR=38
+TARGET_NOT_MOUNTABLE_ERROR=39
+
+GPG_TTY=$(tty)
+export GPG_TTY
+unset SSH_AGENT_PID
+if [ "${gnupg_SSH_AUTH_SOCK_by:-0}" -ne $$ ]; then
+  export SSH_AUTH_SOCK="$(gpgconf --list-dirs agent-ssh-socket)"
+fi
+gpgconf --launch gpg-agent
+
+
+check_update_time () {
+  INTERVAL_CHECK=false
+  if [[ -e ${LOG_FILE} ]] ; then
+    local LAST_TIME=$(grep Success "$LOG_FILE" | tail -1 | sed 's/^.*(\([0-9]*\))$/\1/')
+    if [ "$LAST_TIME" = "" ] || [ $(($(date +"%s")-${LAST_TIME})) -gt "$INTERVAL" ]; then
+      INTERVAL_CHECK=true
+    fi
+  else
+    mkdir -p "$HOME"/.cache/MyBackup
+    touch "$HOME"/.cache/MyBackup/backup.log
+    INTERVAL_CHECK=true
+  fi
+}
+
+check_connection () {
+  if [[ $(iwgetid | cut -d ":" -f2 | tr -d '"') == "$NETWORK" ]] ; then
+    local SSH_STATUS=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$SSH_HOST" echo ok 2>&1)
+    if [[ $SSH_STATUS == ok ]] ; then
+      ssh -o BatchMode=yes "$SSH_HOST" sudo findmnt "$TARGET_DIR" "$1">/dev/null
+      if [[ $? == 0 ]] ; then
+        OK_CHECK=0
+      else
+        ssh -o BatchMode=yes "$SSH_HOST" sudo mount "$TARGET_DIR" "$1">/dev/null
+        if [[ $? == 0 ]] ; then
+          OK_CHECK=0
+        else
+          OK_CHECK=$TARGET_NOT_MOUNTABLE_ERROR
+        fi
+      fi
+    elif [[ $SSH_STATUS == "Permission denied"* ]] ; then
+      OK_CHECK=$NO_SSH_PERMISSION_ERROR
+    else
+      OK_CHECK=$NO_SSH_HOST_ERROR
+    fi
+  else
+    OK_CHECK=$WRONG_NETWORK_ERROR
+  fi
+}
+
+
+# check_update_time
+
+if "$INTERVAL_CHECK" ; then
+  check_connection "$@"
+  OK_CHECK=0
+  if [[ $OK_CHECK == 0 ]] ; then
+    if [[ -e "${LOCAL_DIR}/backup.filter" ]] ; then
+      FILTER="--filter=merge $LOCAL_DIR/backup.filter"
+    fi
+    if rsync "$OPT" "$FILTER" "$LOCAL_DIR"/ pi:"$TARGET_DIR" &>> "$LOG_FILE"; then
+      date +"%F (%s)" | sed 's/\(^.*$\)/Success: \1/' >> "$LOG_FILE"
+
+    fi
+    # ssh -o BatchMode=yes ${SSH_HOST} sudo umount ${TARGET_DIR}
+  else
+    exit "$OK_CHECK"
+  fi
+else
+  exit 40
+fi
