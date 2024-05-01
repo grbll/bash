@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+Help(){
+  echo 'toggle [-h] [-a <app id>] [-s <wayland window settings>] <command>'
+}
+
+while getopts 'ha:s:' OPTION ; do
+  case "$OPTION" in
+    h)
+      Help
+    ;;
+    a)
+      APP_ID="$OPTARG"
+    ;;
+    s)
+      APP_WINDOW_SETTINGS="$OPTARG"
+    ;;
+    *)
+      echo "unkown option $OPTION not used see -h for more information."
+  ;; esac
+done
+
+shift $((OPTIND-1))
+
+if [[ -z $1 ]] ; then 
+  echo 'missing argument'
+  exit 1
+elif ! command -v "$1" &> /dev/null; then
+  echo "$1 is not an executable command"
+  exit 2
+fi
+
+: "${APP_ID:=$1}"
+: "${APP_WINDOW_SETTINGS:=floating enable, focus}"
+
+JSON_FILTER=".. | select(.app_id?) | select(.app_id==\"${APP_ID}\")"
+SWAY_TREE_NODE=$(swaymsg -t get_tree | jq "$JSON_FILTER")
+
+if [[ "$SWAY_TREE_NODE" ]] ; then
+  if [[ "$(echo "$SWAY_TREE_NODE" | jq '.visible')" = true ]] ; then
+    swaymsg \[app_id="$APP_ID"\] move scratchpad
+  else
+    swaymsg \[app_id="$APP_ID"\] move workspace current, "$APP_WINDOW_SETTINGS"
+  fi
+else
+  swaymsg for_window \[app_id="$APP_ID"\] "$APP_WINDOW_SETTINGS"
+  exec footclient --app-id="$APP_ID" "$1"
+fi
