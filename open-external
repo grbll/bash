@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+cat > "/tmp/neomutt-${USER}-viewfile"
+
+JSON_FILTER=".. | select(.app_id?) | select(.app_id==\"neomutt-view\")"
+SWAY_TREE_NODE=$(swaymsg -t get_tree | jq "$JSON_FILTER")
+
+if [[ ! $SWAY_TREE_NODE ]] ; then
+  footclient --app-id=neomutt-view nvim -mR --listen /tmp/neomutt-view-socket "/tmp/neomutt-${USER}-viewfile" &
+else
+  nvr --servername /tmp/neomutt-view-socket --remote-send ':e<return>'
+fi
